@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scroll-Driven Space Fleet</title>
+  <style>
+    /* Make the page scrollable to drive the animation */
+    body { 
+      margin: 0; 
+      padding: 0;
+      height: 500vh; /* 5 pages of scroll depth */
+      background-color: #030308; 
+      overflow-x: hidden;
+      font-family: 'Inter', -apple-system, sans-serif;
+    }
+    
+    /* Fixed 3D Canvas */
+    canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1;
+    }
+
+    /* Removed vignette */
+
+    /* Floating UI Layer */
+    #ui-layer {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 10;
+      pointer-events: none; /* Only buttons should capture clicks */
+    }
+
+    /* Info text */
+    #info {
+      position: absolute;
+      top: 30px;
+      width: 100%;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      display: none; /* hidden until scroll phase */
+    }
+    
+    #scroll-hint {
+      position: absolute;
+      bottom: 40px;
+      width: 100%;
+      text-align: center;
+      color: #4facfe;
+      font-size: 14px;
+      font-weight: 600;
+      animation: bounce 2s infinite;
+      display: none; /* hidden until scroll phase */
+    }
+    
+    #enter-prompt {
+      position: absolute;
+      bottom: 80px;
+      width: 100%;
+      text-align: center;
+      color: #00ffcc;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      text-shadow: 0 0 10px #00ffcc, 0 0 25px rgba(0, 255, 204, 0.5);
+      display: none;
+      animation: pulse 1.5s infinite;
+      z-index: 20;
+      pointer-events: auto;
+      cursor: pointer;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(10px); }
+    }
+
+    /* Fleet Manager Sidebar */
+    #fleet-manager {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 280px;
+      max-height: calc(100vh - 40px);
+      background: rgba(15, 15, 25, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      backdrop-filter: blur(12px);
+      padding: 20px;
+      pointer-events: auto;
+      overflow-y: auto;
+      color: white;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #4facfe;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      padding-bottom: 10px;
+    }
+
+    .model-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .model-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+
+    .model-name {
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
+    }
+
+    .del-btn {
+      background: rgba(255, 50, 50, 0.2);
+      border: none;
+      color: #ff9999;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      padding: 4px 8px;
+      transition: 0.2s;
+    }
+    .del-btn:hover {
+      background: rgba(255, 50, 50, 0.5);
+      color: white;
+    }
+
+    .upload-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      background: rgba(79, 172, 254, 0.15);
+      border: 1px solid #4facfe;
+      color: #4facfe;
+      padding: 10px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 10px;
+      box-sizing: border-box;
+    }
+    .upload-btn:hover {
+      background: rgba(79, 172, 254, 0.3);
+      color: white;
+    }
+
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 100;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      font-size: 20px;
+      font-weight: bold;
+      transition: opacity 0.5s;
+    }
+  </style>
+
+  <!-- Three.js Import map -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div id="loading-overlay">Loading Database...</div>
+  
+  <div id="ui-layer">
+    <div id="enter-prompt" onclick="document.dispatchEvent(new KeyboardEvent('keydown', {'key':'Enter'}))">[ENTER] ADVANCE FLEET</div>
+    <div id="info">Scroll down to fly forward</div>
+    <div id="scroll-hint">↓ SCROLL TO DRIVE ↓</div>
+
+    <!-- Interface to manage Ships and Meteorites -->
+    <div id="fleet-manager">
+      <div class="panel-title">Spaceships</div>
+      <div id="ship-list" class="model-list">
+         <div style="font-size: 11px; color: #888;">No ships loaded</div>
+      </div>
+      <label class="upload-btn">
+        + Add Spaceship (.glb)
+        <input type="file" id="ship-input" accept=".glb,.gltf" style="display: none;">
+      </label>
+
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ==========================================
+    // 1. INDEXED DATABASE FOR PERSISTENT MODELS
+    // ==========================================
+    const DB_NAME = "SpaceFleetDB";
+    const STORE_NAME = "models";
+    let db;
+
+    function initDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, 1);
+        request.onupgradeneeded = (e) => {
+          db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          }
+        };
+        request.onsuccess = (e) => {
+          db = e.target.result;
+          resolve();
+        };
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }
+
+    function saveModelToDB(id, name, type, arrayBuffer) {
+      return new Promise((resolve) => {
+        const tx = db.transaction([STORE_NAME], 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.put({ id, name, type, data: arrayBuffer, timestamp: Date.now() });
+        tx.oncomplete = () => resolve();
+      });
+    }
+
+    function removeModelFromDB(id) {
+      return new Promise((resolve) => {
+        const tx = db.transaction([STORE_NAME], 'readwrite');
+        tx.objectStore(STORE_NAME).delete(id);
+        tx.oncomplete = () => resolve();
+      });
+    }
+
+    function getAllModelsFromDB() {
+      return new Promise((resolve) => {
+        const tx = db.transaction([STORE_NAME], 'readonly');
+        const req = tx.objectStore(STORE_NAME).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+      });
+    }
+
+
+    // ==========================================
+    // 2. THREE.JS SCENE SETUP
+    // ==========================================
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x020205); // Ultra realistic extremely deep dark space
+    scene.fog = new THREE.FogExp2(0x020205, 0.003); // Significantly reduced fog density so models look totally solid 
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    // Start very near originally
+    camera.position.set(-8, 2, 4);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 3.0; // Dramatically boosted overall brightness
+    document.body.appendChild(renderer.domElement);
+
+    // OrbitControls: Zoom disabled so user can scroll page freely
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.enableZoom = false; // Disable zooming, scrolling drives the ship!
+
+    // Lighting (Completely overhauled for Maximum Visibility)
+    // 1. Hemisphere Light provides massive ambient daylight diffusion
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 6.0);
+    scene.add(hemiLight);
+    
+    // Guaranteed base brightness so Spaceships and Meteorites are perfectly visible
+    const ambientLight = new THREE.AmbientLight(0xffffff, 4.0);
+    scene.add(ambientLight);
+
+    // 2. Headlamp attached directly to the camera (500 distance covers the whole scene)
+    const headlamp = new THREE.PointLight(0xffffff, 6.0, 500);
+    camera.add(headlamp);
+    scene.add(camera); // Must add camera to scene for children to render
+
+    // 3. Keep original cinematic highlights
+    const rimLight = new THREE.DirectionalLight(0x4facfe, 1.5);
+    rimLight.position.set(-20, -10, -20);
+    scene.add(rimLight);
+
+    const fillLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    fillLight.position.set(0, 10, 20);
+    scene.add(fillLight);
+
+    // Starfield Geometry
+    const starCount = 5000;
+    const starsGeometry = new THREE.BufferGeometry();
+    const posArray = new Float32Array(starCount * 3);
+    for(let i = 0; i < starCount * 3; i++) posArray[i] = (Math.random() - 0.5) * 200;
+    starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+    const starsMaterial = new THREE.PointsMaterial({ size: 0.25, color: 0xffffff, transparent: true, opacity: 0.8 });
+    const starsMesh = new THREE.Points(starsGeometry, starsMaterial);
+    scene.add(starsMesh);
+
+    // Global Collections
+    const astCount = 200;
+    const shipsGroup = new THREE.Group();
+    const astGroup = new THREE.Group();
+    scene.add(shipsGroup);
+    scene.add(astGroup);
+    
+    // Arrays for tracking loaded objects to animate
+    let loadedShips = [];
+    let astData = [];
+
+    // ==========================================
+    // 3. MODEL RENDERING LOGIC
+    // ==========================================
+    const loader = new GLTFLoader();
+
+    function renderShips(shipRecords) {
+      // Clear current ships
+      shipsGroup.clear();
+      loadedShips = [];
+      const listEl = document.getElementById('ship-list');
+      listEl.innerHTML = '';
+
+      if (shipRecords.length === 0) {
+        listEl.innerHTML = '<div style="font-size: 11px; color: #888;">No ships loaded</div>';
+        return;
+      }
+
+      shipRecords.forEach((record, index) => {
+        // UI
+        const item = document.createElement('div');
+        item.className = 'model-item';
+        item.innerHTML = `
+          <div class="model-name" title="${record.name}">${record.name}</div>
+          <button class="del-btn" data-id="${record.id}">X</button>
+        `;
+        listEl.appendChild(item);
+
+        // 3D Model
+        const blob = new Blob([record.data]);
+        const url = URL.createObjectURL(blob);
+        
+        loader.load(url, (gltf) => {
+          URL.revokeObjectURL(url);
+          const model = gltf.scene;
+          
+          const box = new THREE.Box3().setFromObject(model);
+          const center = box.getCenter(new THREE.Vector3());
+          model.position.sub(center); 
+          const size = box.getSize(new THREE.Vector3()).length();
+          const shipLength = box.getSize(new THREE.Vector3()).z;
+          const scale = 10 / (size || 1); 
+          model.scale.set(scale, scale, scale);
+          
+          // Guarantee maximum absolute opacity (overriding any transparent textures baked into the GLB)
+          model.traverse((child) => {
+             if (child.isMesh && child.material) {
+                 child.material.transparent = false;
+                 child.material.opacity = 1.0;
+                 child.material.depthWrite = true;
+             }
+          });
+          
+          const wrapper = new THREE.Group();
+          wrapper.add(model);
+          
+          // Flipped 180 degrees initially, so they face down the flight path
+          wrapper.rotation.y = Math.PI;
+          wrapper.rotation.z = Math.PI * 0.05;
+          wrapper.rotation.x = Math.PI * 0.02;
+
+          // Line the fleet up for a highly cinematic fly-through
+          // We push them out sequentially so they form a convoy line
+          const offsetX = (Math.random() - 0.5) * 10;
+          const offsetY = (Math.random() - 0.5) * 10;
+          const offsetZ = 80 - (index * 40) - (Math.random() * 10); 
+          wrapper.position.set(offsetX, offsetY, offsetZ);
+
+          shipsGroup.add(wrapper);
+          loadedShips.push({ mesh: wrapper, randomOffset: index * Math.PI });
+        });
+      });
+    }
+
+    // ==========================================
+    // AUTOMATIC METEORITE LOADING
+    // ==========================================
+    const loadPromise = (fileName) => {
+        return new Promise(resolve => {
+            const loader2 = new GLTFLoader();
+            loader2.load(fileName, (gltf) => resolve(gltf.scene), undefined, () => resolve(null));
+        });
+    };
+
+    function initMeteorites() {
+        Promise.all([
+            loadPromise('metiorite.glb'),
+            loadPromise('metiorite 2.glb')
+        ]).then(([model1, model2]) => {
+            let models = [];
+            if (model1) models.push(model1);
+            if (model2) models.push(model2);
+            
+            if (models.length === 0) {
+                const tempMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(1.5, 0), new THREE.MeshStandardMaterial({color: 0x666666, roughness: 0.9}));
+                models.push(tempMesh);
+            }
+
+            models.forEach(m => {
+                const box = new THREE.Box3().setFromObject(m);
+                const center = box.getCenter(new THREE.Vector3());
+                m.position.sub(center);
+                const size = box.getSize(new THREE.Vector3()).length();
+                const scale = 2.5 / (size === 0 ? 1 : size); 
+                m.scale.set(scale, scale, scale);
+
+                // Brighten the imported meteorite materials to fix darkness
+                m.traverse(child => {
+                    if (child.isMesh && child.material) {
+                        child.material.envMapIntensity = 2.5; 
+                        if (child.material.color) {
+                            child.material.color.multiplyScalar(2.5); // Boost base brightness 
+                        }
+                    }
+                });
+            });
+
+            spawnAsteroids(models);
+        });
+    }
+
+    initMeteorites();
+
+    function spawnAsteroids(validModels) {
+      for (let i = 0; i < 200; i++) {
+          const baseModel = validModels[i % validModels.length];
+          const wrapper = new THREE.Group();
+          const clone = baseModel.clone();
+          
+          // Make Meteorites natural rocky brown-black
+          clone.traverse((child) => {
+              if (child.isMesh && child.material) {
+                  child.material = child.material.clone();
+                  // Creates earthy brown, copper tones with HIGH lightness so they match spaceships
+                  const hue = 0.05 + Math.random() * 0.05;
+                  const sat = 0.2 + Math.random() * 0.2;
+                  const lit = 0.45 + Math.random() * 0.25; // Drastically brightened rock surfaces!
+                  child.material.color.setHSL(hue, sat, lit);
+                  
+                  // Force solid un-transparent rocks
+                  child.material.transparent = false;
+                  child.material.opacity = 1.0;
+                  child.material.depthWrite = true;
+              }
+          });
+          
+          wrapper.add(clone);
+
+          // Safely hit the screen directly without pushing them away
+          const x = (Math.random() - 0.5) * 120;
+          const y = (Math.random() - 0.5) * 120; 
+          const z = (Math.random() - 0.5) * 160;
+          
+          // Highly dynamic random sizing up to 13x spaceship size
+          let scale = 0.5 + Math.random() * 2.5; 
+          const r = Math.random();
+          if (r > 0.9) scale = 4.0 + Math.random() * 9.0; // Occasional massive 13x planetoids
+          else if (r < 0.2) scale = 0.1 + Math.random() * 0.4; // Tiny debris
+          
+          wrapper.position.set(x, y, z);
+          wrapper.scale.set(scale, scale, scale);
+          wrapper.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+
+          const rotX = (Math.random() - 0.5) * 0.04;
+          const rotY = (Math.random() - 0.5) * 0.04;
+          const rotZ = (Math.random() - 0.5) * 0.04;
+          // Speed variation
+          const speedFactor = 0.2 + Math.random() * 0.6; 
+
+          astData.push({ 
+              mesh: wrapper,
+              rotSpeed: new THREE.Vector3(rotX, rotY, rotZ),
+              speedFactor: speedFactor
+          });
+          astGroup.add(wrapper);
+      }
+    }
+
+    // ==========================================
+    // 4. MAIN INIT & UI LOGIC
+    // ==========================================
+    async function loadSceneState() {
+      const records = await getAllModelsFromDB();
+      const ships = records.filter(r => r.type === 'ship');
+      
+      renderShips(ships);
+      
+      document.getElementById('loading-overlay').style.opacity = 0;
+      setTimeout(() => document.getElementById('loading-overlay').style.display = 'none', 500);
+    }
+
+    // Init App
+    initDB().then(() => loadSceneState());
+
+    // Handle Uploads
+    async function handleUpload(file, type) {
+      document.getElementById('loading-overlay').style.display = 'flex';
+      document.getElementById('loading-overlay').style.opacity = 1;
+      
+      const arrayBuffer = await file.arrayBuffer();
+      const id = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 5);
+      await saveModelToDB(id, file.name, type, arrayBuffer);
+      await loadSceneState();
+    }
+
+    document.getElementById('ship-input').addEventListener('change', (e) => {
+      if(e.target.files[0]) handleUpload(e.target.files[0], 'ship');
+    });
+
+    // Handle Deletions (Event Delegation)
+    document.getElementById('fleet-manager').addEventListener('click', async (e) => {
+      if(e.target.classList.contains('del-btn')) {
+        const id = e.target.getAttribute('data-id');
+        await removeModelFromDB(id);
+        await loadSceneState();
+      }
+    });
+
+    // ==========================================
+    // 5. SCROLL-DRIVEN ANIMATION LOGIC
+    // ==========================================
+    let targetScrollVelocity = 0;
+    let currentScrollVelocity = 0;
+    let lastScrollY = window.scrollY;
+
+    window.addEventListener('scroll', () => {
+      // Hide hint once user starts scrolling
+      document.getElementById('scroll-hint').style.display = 'none';
+      
+      const currentY = window.scrollY;
+      const deltaY = currentY - lastScrollY;
+      
+      // Much slower scroll conversion for background movement
+      targetScrollVelocity = deltaY * 0.015; 
+      lastScrollY = currentY;
+    });
+
+    // Reset target velocity to zero constantly so scrolling STOPS when mouse stops
+    setInterval(() => {
+      targetScrollVelocity *= 0.8;
+    }, 50);
+
+    const clock = new THREE.Clock();
+    
+    // Core State Machine Engine
+    const STATES = {
+        FLY_THROUGH: 0,
+        FOCUS: 1,
+        TRANSITION: 2,
+        CLUSTER: 3,
+        SCROLL: 4
+    };
+    let currentAnimState = STATES.FLY_THROUGH;
+    let introAnimationTime = 0;
+    let targetShipIndex = 0;
+    let focusIdleTime = 0;
+    
+    // Positions to lerp between states
+    let transStartPos = new THREE.Vector3();
+    let transEndPos = new THREE.Vector3();
+    let transStartLook = new THREE.Vector3();
+    let transEndLook = new THREE.Vector3();
+    let unvisitedShips = [];
+    let hasGeneratedList = false;
+    
+    // Keyboard listener to trigger transitions between spaceships
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && currentAnimState === STATES.FOCUS) {
+            document.getElementById('enter-prompt').style.display = 'none';
+            introAnimationTime = 0;
+            
+            // Generate list of unvisited ships if missing (excluding initially visited Ship 0)
+            if (!hasGeneratedList && loadedShips.length > 1) {
+                hasGeneratedList = true; 
+                for (let i = 1; i < loadedShips.length; i++) {
+                    unvisitedShips.push(i);
+                }
+            }
+            
+            // Jump to completely random ships exactly once (no repeats or misses)
+            if (unvisitedShips.length > 0) {
+                const prevShip = loadedShips[targetShipIndex].mesh;
+                
+                // Splice mathematically guarantees ships are visited exactly once
+                const arrayIndex = Math.floor(Math.random() * unvisitedShips.length);
+                targetShipIndex = unvisitedShips.splice(arrayIndex, 1)[0];
+                
+                const nextShip = loadedShips[targetShipIndex].mesh;
+                
+                transStartPos.copy(camera.position);
+                // Camera must ALWAYS firmly keep its sequence in the original 'front-left' position
+                transEndPos.set(nextShip.position.x - 12, nextShip.position.y + 4, nextShip.position.z + 15);
+                
+                transStartLook.copy(prevShip.position);
+                transEndLook.copy(nextShip.position);
+                
+                currentAnimState = STATES.TRANSITION;
+            } else {
+                currentAnimState = STATES.CLUSTER;
+                const activeAnchorShip = loadedShips[targetShipIndex].mesh;
+                
+                // Final motion lock: Camera stays perfectly parked in front of the final 'UFO'
+                transStartPos.copy(camera.position);
+                transEndPos.copy(camera.position);
+                
+                transStartLook.copy(activeAnchorShip.position);
+                transEndLook.copy(activeAnchorShip.position);
+            }
+        }
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      const elapsedTime = clock.getElapsedTime();
+      
+      // Heavy Cinematic State Machine Sequence
+      if (currentAnimState === STATES.FLY_THROUGH) {
+          introAnimationTime += delta * 0.65; // ~1.5 seconds (ultra aggressive rotating zoom speed) 
+          
+          if (introAnimationTime >= 1) {
+              introAnimationTime = 0;
+              if(loadedShips.length > 0) {
+                 currentAnimState = STATES.FOCUS; 
+                 const ship = loadedShips[targetShipIndex].mesh;
+                 // Front left aspect lock
+                 camera.position.set(ship.position.x - 12, ship.position.y + 4, ship.position.z + 15);
+                 camera.lookAt(ship.position);
+                 controls.target.copy(ship.position);
+              } else {
+                 currentAnimState = STATES.SCROLL;
+              }
+          } else {
+              if (loadedShips.length > 0) {
+                  const ship = loadedShips[targetShipIndex].mesh;
+                  let t = introAnimationTime; 
+                  t = t * t * (3 - 2 * t); 
+                  
+                  // Start exact opposite direction of meteorites, revolves 360 smoothly
+                  const startAngle = Math.atan2(15, -12); // x=-12, z=+15
+                  const angle = startAngle + (t * Math.PI * 2); 
+                  
+                  // Dynamic Zoom Out and Zoom In during the rotation!
+                  // sine wave acts as a perfect parabolic multiplier hitting 1 in the middle
+                  const baseRadius = Math.sqrt(12*12 + 15*15); // ~19.2
+                  let dynamicRadius = baseRadius + (Math.sin(t * Math.PI) * 45); 
+                  
+                  camera.position.x = ship.position.x + Math.cos(angle) * dynamicRadius;
+                  camera.position.y = ship.position.y + 4 + (Math.sin(t * Math.PI) * 12); // Fly slightly higher during orbit zoom
+                  camera.position.z = ship.position.z + Math.sin(angle) * dynamicRadius;
+                  
+                  camera.lookAt(ship.position);
+                  controls.target.copy(ship.position);
+              }
+          }
+      } 
+      else if (currentAnimState === STATES.FOCUS) {
+          focusIdleTime += delta;
+          const ship = loadedShips[targetShipIndex].mesh;
+          
+          // Subtle hover to give life while static
+          camera.position.x += Math.sin(focusIdleTime * 2) * 0.005;
+          camera.position.y += Math.cos(focusIdleTime * 1.5) * 0.005;
+          camera.lookAt(ship.position);
+          controls.target.copy(ship.position);
+          
+          document.getElementById('enter-prompt').style.display = 'block';
+      }
+      else if (currentAnimState === STATES.TRANSITION) {
+          introAnimationTime += delta * 0.45; // Smooth fast helical transition flight
+          if (introAnimationTime >= 1) {
+              introAnimationTime = 0;
+              currentAnimState = STATES.FOCUS; // Stop ONLY ONCE exactly at the new ship!
+          } else {
+              let t = introAnimationTime;
+              t = t * t * (3 - 2 * t);
+              
+              const ship = loadedShips[targetShipIndex].mesh;
+              
+              // Smooth 3D Helicopter Spiral: Fly from old ship directly *into* a 360 orbit of the new ship seamlessly!
+              const dx = transStartPos.x - ship.position.x;
+              const dz = transStartPos.z - ship.position.z;
+              const startDist = Math.sqrt(dx*dx + dz*dz) || 0.1;
+              const initialAngle = Math.atan2(dz, dx);
+              
+              const endAngle = Math.atan2(15, -12); // Front-left landing angle
+              let targetAngle = endAngle;
+              while (targetAngle <= initialAngle + Math.PI * 1.5) targetAngle += Math.PI * 2; // Guarantee a heavy cinematic spin
+              
+              const currentAngle = initialAngle + (targetAngle - initialAngle) * t;
+              
+              const focusRadius = Math.sqrt(12*12 + 15*15); // ~19.2
+              // Powerful parabolic arc: starts at old ship, zooms way out +45 into space, then crashes smoothly into orbit radius
+              const dynamicRadius = startDist + (focusRadius - startDist) * t + (Math.sin(t * Math.PI) * 45);
+              
+              camera.position.x = ship.position.x + Math.cos(currentAngle) * dynamicRadius;
+              camera.position.z = ship.position.z + Math.sin(currentAngle) * dynamicRadius;
+              
+              const startY = transStartPos.y;
+              const endY = ship.position.y + 4;
+              camera.position.y = startY + (endY - startY) * t + (Math.sin(t * Math.PI) * 15);
+              
+              // Pan view to new ship rapidly so you lock onto it while spiraling through space
+              const lookT = Math.min(1.0, t * 1.8);
+              const currentLook = new THREE.Vector3().lerpVectors(transStartLook, transEndLook, lookT);
+              
+              camera.lookAt(currentLook);
+              controls.target.copy(currentLook);
+          }
+      }
+      else if (currentAnimState === STATES.CLUSTER) {
+          introAnimationTime += delta * 0.3; // 3.3 sec clustering
+          if (introAnimationTime >= 1) {
+              introAnimationTime = 1;
+              currentAnimState = STATES.SCROLL;
+              // Make scroll UI visible
+              document.getElementById('info').style.display = 'block';
+              document.getElementById('scroll-hint').style.display = 'block';
+          } else {
+              let t = introAnimationTime;
+              t = t * t * (3 - 2 * t);
+              
+              const activeAnchorShip = loadedShips[targetShipIndex].mesh;
+              
+              // Group all ships simultaneously dynamically AROUND the randomly focused final ship
+              loadedShips.forEach((shipData, idx) => {
+                  if(!shipData.originalPos) shipData.originalPos = new THREE.Vector3().copy(shipData.mesh.position);
+                  
+                  // The dynamically targeted ship is the Anchor. Does not move.
+                  if (idx === targetShipIndex) {
+                      if(!shipData.targetClusterPos) shipData.targetClusterPos = new THREE.Vector3().copy(shipData.originalPos);
+                  } else {
+                      if(!shipData.targetClusterPos) {
+                         // Extremely dynamic 'Fly Past' logic. Distant ships radically sprint toward the Anchor.
+                         shipData.targetClusterPos = new THREE.Vector3(
+                            activeAnchorShip.position.x + (Math.random() - 0.5) * 35,
+                            activeAnchorShip.position.y + (Math.random() - 0.5) * 20,
+                            activeAnchorShip.position.z - 15 - (Math.random() * 30) // Tightly gather offset behind Anchor
+                         );
+                      }
+                  }
+                  shipData.mesh.position.lerpVectors(shipData.originalPos, shipData.targetClusterPos, t);
+              });
+              
+              // Camera rigorously holds firm on the Anchor
+              camera.lookAt(activeAnchorShip.position);
+              controls.target.copy(activeAnchorShip.position);
+          }
+      }
+      else if (currentAnimState === STATES.SCROLL) {
+          // Normal free scroll drive logic mathematically tethered to the Anchor Ship
+          currentScrollVelocity += (targetScrollVelocity - currentScrollVelocity) * 0.1;
+          const maxScroll = document.body.scrollHeight - window.innerHeight;
+          let scrollPercent = window.scrollY / (maxScroll || 1);
+          
+          let anchorShip = loadedShips[targetShipIndex].mesh;
+          
+          const targetDistance = 22 + (scrollPercent * 90);
+          
+          const relativePos = new THREE.Vector3().subVectors(camera.position, anchorShip.position);
+          if(relativePos.lengthSq() < 0.1) relativePos.set(1, 1, 1);
+          
+          const direction = relativePos.normalize();
+          const targetCamPos = new THREE.Vector3().copy(anchorShip.position).add(direction.multiplyScalar(targetDistance));
+          
+          camera.position.lerp(targetCamPos, 0.1);
+          controls.target.copy(anchorShip.position);
+      }
+
+      // Animate Meteorites flying purely based on scroll velocity (plus tiny idle float)
+      astData.forEach(data => {
+          // Much slower base speed when purely scrolling
+          const actualSpeed = (0.2 + currentScrollVelocity * 4) * data.speedFactor;
+          data.mesh.position.z += actualSpeed; 
+          
+          // Loop meteorites back to the horizon when they pass the camera
+          if (data.mesh.position.z > 50) {
+              data.mesh.position.z = -120;
+              data.mesh.position.x = (Math.random() - 0.5) * 120;
+              data.mesh.position.y = (Math.random() - 0.5) * 120;
+          } else if (data.mesh.position.z < -120) { // For scrolling UP (reverse)
+              data.mesh.position.z = 50;
+          }
+
+          data.mesh.rotation.x += data.rotSpeed.x;
+          data.mesh.rotation.y += data.rotSpeed.y;
+          data.mesh.rotation.z += data.rotSpeed.z;
+      });
+
+      // Animate Starfield flying past based on scroll
+      const posAttr = starsGeometry.attributes.position;
+      for(let i=0; i<starCount; i++) {
+          posAttr.array[i * 3 + 2] += (0.2 + currentScrollVelocity * 4); 
+          if (posAttr.array[i * 3 + 2] > 50) posAttr.array[i * 3 + 2] -= 200;
+          else if (posAttr.array[i * 3 + 2] < -150) posAttr.array[i * 3 + 2] += 200;
+      }
+      posAttr.needsUpdate = true;
+
+      // Animate Ships (time-based bobbing only, they don't move forward in space)
+      loadedShips.forEach((shipData) => {
+          const ship = shipData.mesh;
+          const offset = shipData.randomOffset;
+          // Subtly rock back and forth based on continuous time
+          ship.position.y += Math.sin(elapsedTime * 1.5 + offset) * 0.005;
+          const hull = ship.children[0];
+          hull.rotation.z = Math.sin(elapsedTime * 0.8 + offset) * 0.05;
+          hull.rotation.x = Math.sin(elapsedTime * 1.2 + offset) * 0.03;
+          
+          // Slight tilt based on flight speed
+          ship.rotation.x = Math.max(-0.2, Math.min(0.2, currentScrollVelocity * 0.1));
+      });
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Start exactly at the top (extremely near)
+    window.onload = () => window.scrollTo(0, 0);
+
+  </script>
+</body>
+</html>
